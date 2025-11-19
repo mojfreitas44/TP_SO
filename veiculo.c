@@ -1,78 +1,121 @@
 #include "comum.h"
 
-//comunicção entre a viatura e cliente -> named pipe
-//comunicação entre veiculo e controlador -> pipe anonimo e fork
+// ============================================================================
+// VARIÁVEIS GLOBAIS
+// ============================================================================
+char pipe_cliente_nome[100];
+int fd_cliente_pipe = -1;
 
-typedef struct{  //não sei se a criação desta estrutura é necessária
-    char username_cliente[50];
-    int  pid_cliente;
-    int  distancia_total;
-    char local_partida[100];
+// ============================================================================
+// GESTÃO DE RECURSOS E SINAIS
+// ============================================================================
 
-    // Nomes dos pipes
-    char pipe_cliente_nome[100]; // O pipe DO cliente (para onde envio avisos)
-    char pipe_veiculo_nome[100]; // O MEU pipe (onde leio 'entrar' e 'sair')
-}InfoVeiculo;
-
-InfoVeiculo veiculo;
-
-void limparPipeVeiculo() {
-    unlink(veiculo.pipe_veiculo_nome);
-}
-void sinalSIGUSR1(int s) {
-    // Handler para o sinal SIGUSR1 (pode ser usado para interrupções)
-    printf("[VEÍCULO] Sinal SIGUSR1 recebido.\n");
-    //enviar Mensagem ao cliente a informar que houve uma interrupção
+void limpar_recursos() {
+    if (fd_cliente_pipe != -1) close(fd_cliente_pipe);
+    // Já não há pipe do veículo para apagar!
 }
 
+void trata_sinal_cancelar(int s) {
+    // Caso receba o sinal SIGUSR1 deve cancelar o serviço
+    printf("Viagem cancelada pelo controlador!\n"); 
+    fflush(stdout);
+    
+    if (fd_cliente_pipe != -1) {
+        Mensagem m;
+        m.pid = getpid();
+        strcpy(m.comando, "fim");
+        strcpy(m.mensagem, "Viagem cancelada pela central!");
+        write(fd_cliente_pipe, &m, sizeof(Mensagem));
+    }
+    exit(0);
+}
 
+void setup_ambiente(int pid_cliente) {
+    setbuf(stdout, NULL);
+    atexit(limpar_recursos);
+    signal(SIGUSR1, trata_sinal_cancelar);
+    signal(SIGINT, trata_sinal_cancelar);
+
+    // Apenas precisamos de saber o nome do pipe do cliente para o avisar
+    sprintf(pipe_cliente_nome, PIPE_CLIENTE, pid_cliente);
+}
+
+// ============================================================================
+// FASES DO SERVIÇO
+// ============================================================================
+
+void iniciar_viagem(const char *local) {
+    // 1. Contactar Cliente
+    fd_cliente_pipe = open(pipe_cliente_nome, O_WRONLY);
+    if (fd_cliente_pipe == -1) {
+        printf("Erro: Cliente incontactável. Abortar.\n"); // Sai no stdout para o controlador ver
+        exit(1);
+    }
+
+    Mensagem msg;
+    msg.pid = getpid();
+    strcpy(msg.comando, "status");
+    
+    // Nova lógica: Chegou = Começou
+    sprintf(msg.mensagem, "Veículo chegou a %s. A iniciar viagem...", local);
+    write(fd_cliente_pipe, &msg, sizeof(Mensagem));
+}
+
+void realizar_viagem_simulada(int distancia_total) {
+    printf("Início da viagem de %dkm.\n", distancia_total); // -> Controlador
+
+    int perc = 0;
+    int km_percorridos = 0;
+    
+    // Loop simples de simulação (sem leituras, apenas escrita)
+    while (km_percorridos < distancia_total) {
+        sleep(1); // Avanço do tempo (1s = 1 unidade de tempo)
+        km_percorridos++;
+        
+        int nova_perc = (km_percorridos * 100) / distancia_total;
+        
+        // Reporta a cada 10% ao Controlador
+        if (nova_perc / 10 > perc / 10) {
+            printf("Progresso: %d%% (%d/%d km)\n", nova_perc, km_percorridos, distancia_total);
+            fflush(stdout); // Importante para o pipe anónimo não ficar preso no buffer
+        }
+        perc = nova_perc;
+    }
+
+    // Conclusão normal
+    printf("Viagem concluída com sucesso.\n"); // -> Controlador
+    
+    Mensagem msg_fim;
+    msg_fim.pid = getpid();
+    strcpy(msg_fim.comando, "fim");
+    strcpy(msg_fim.mensagem, "Chegámos ao destino.");
+    write(fd_cliente_pipe, &msg_fim, sizeof(Mensagem));
+}
+
+// ============================================================================
+// MAIN
+// ============================================================================
 
 int main(int argc, char *argv[]) {
-    //config inicial: ler argv e garnatir que a comunicação está estabelecida (falta)
     if (argc != 5) {
-        printf("Uso: ./veiculo <username> <pid_cliente> <distancia> <local>\n");
+        printf("Erro args: ./veiculo <user> <pid_cli> <dist> <local>\n");
         return 1;
     }
-    signal(SIGUSR1, sinalSIGUSR1);
-    //argv
-    strcpy(veiculo.username_cliente, argv[1]);
-    veiculo.pid_cliente = atoi(argv[2]);
-    veiculo.distancia_total = atoi(argv[3]);
-    strcpy(veiculo.local_partida, argv[4]);
 
+    // Parsing dos argumentos
+    // char *username = argv[1]; // Não usado diretamente aqui, mas útil para debug se quiseres
+    int pid_cliente = atoi(argv[2]);
+    int distancia = atoi(argv[3]);
+    char *local = argv[4];
 
-    printf("INICIO: Veículo (PID %d) lançado para %s (PID %d).\n", getpid(), veiculo.username_cliente, veiculo.pid_cliente);
-    fflush(stdout);
+    // 1. Configuração
+    setup_ambiente(pid_cliente);
 
-    char pipe_cliente[100];
-    sprintf(pipe_cliente, PIPE_CLIENTE, veiculo.pid_cliente);
+    // 2. Avisar chegada e início automático (Simplificação do Prof)
+    iniciar_viagem(local);
 
-    if(mkfifo(veiculo.pipe_veiculo_nome, 0666) == -1) {
-        perror("mkfifo veiculo");
-        fflush(stdout);
-        exit (1);
-    }
+    // 3. Simular o percurso
+    realizar_viagem_simulada(distancia);
 
-    // é melhor criar uma função enviar mensagem para cliente para evitar repetição de código
-    sleep(2);
-    int fd = open(pipe_cliente, O_WRONLY);
-    if (fd != -1) {
-        Mensagem m;
-        sprintf(m.comando, "status");
-        sprintf(m.mensagem, "Veículo a caminho de %s!", veiculo.username_cliente);
-        write(fd, &m, sizeof(Mensagem));
-        close(fd);
-    }
-
-    sleep(3);
-    fd = open(pipe_cliente, O_WRONLY);
-    if (fd != -1) {
-        Mensagem m;
-        sprintf(m.comando, "fim");
-        sprintf(m.mensagem, "Chegámos ao destino, %s!", veiculo.username_cliente);
-        write(fd, &m, sizeof(Mensagem));
-        close(fd);
-    }
-    printf("[VEÍCULO] Viagem concluída.\n");
     return 0;
 }

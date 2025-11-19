@@ -13,6 +13,7 @@
 
 #define PIPE_CONTROLADOR "controlador_fifo"
 #define PIPE_CLIENTE "pipe%d"
+#define PIPE_VEICULO "veiculo%d"
 #define NVEICULOS 10
 #define NUTILIZADORES 30
 

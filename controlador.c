@@ -1,266 +1,258 @@
 #include "comum.h"
 
+// ============================================================================
+// ESTRUTURAS DE DADOS
+// ============================================================================
 
-int tempo_simulado = 0;
-int total_km = 0;
+typedef struct {
+    pid_t pid;
+    int fd_leitura;     
+    int ocupado;        
+} Veiculo;
 
-// ...existing code...
-void limparPipes()
-{
+typedef struct {
+    Veiculo frota[NVEICULOS];
+    pid_t clientes[NUTILIZADORES]; 
+    int num_veiculos;   
+    int fd_clientes;    
+    int tempo;          
+    int total_km;       
+} Controlador;
+
+static Controlador ctrl;
+
+// ============================================================================
+// FUNÇÕES AUXILIARES
+// ============================================================================
+
+void log_msg(const char *tag, const char *msg) {
+    printf("[TEMPO %03d] %-12s %s\n", ctrl.tempo, tag, msg);
+    fflush(stdout); // <--- ESTA LINHA RESOLVE O TEU PROBLEMA
+}
+
+void registar_cliente(pid_t pid) {
+    for (int i = 0; i < NUTILIZADORES; i++) {
+        if (ctrl.clientes[i] == 0) {
+            ctrl.clientes[i] = pid;
+            return;
+        }
+    }
+}
+
+void remover_cliente(pid_t pid) {
+    for (int i = 0; i < NUTILIZADORES; i++) {
+        if (ctrl.clientes[i] == pid) {
+            ctrl.clientes[i] = 0;
+            return;
+        }
+    }
+}
+
+void limpar_recursos() {
+    printf("\n[SISTEMA] A encerrar controlador e notificar todos...\n");
+    
+    // Notificar Clientes
+    for (int i = 0; i < NUTILIZADORES; i++) {
+        if (ctrl.clientes[i] > 0) kill(ctrl.clientes[i], SIGUSR1);
+    }
+
+    // Notificar Veículos
+    for (int i = 0; i < ctrl.num_veiculos; i++) {
+        if (ctrl.frota[i].pid > 0) {
+            kill(ctrl.frota[i].pid, SIGKILL); 
+            close(ctrl.frota[i].fd_leitura);
+        }
+    }
+    
+    if (ctrl.fd_clientes != -1) close(ctrl.fd_clientes);
     unlink(PIPE_CONTROLADOR);
 }
 
-// Envia uma resposta ao cliente que enviou 'msg'
-
-// Trata os comandos recebidos numa Mensagem
-void processa_comandos(char* linha)
-{
-    char comando[50], arg[50];
-    int num_args = sscanf(linha, "%49s %49s", comando, arg);
-    if(num_args == 0) return;
-    printf("[CONTROLADOR] Comando recebido: %s\n", linha);
-    
-
-    if (strcmp(comando, "listar") == 0)
-    {
-        // Exemplo: listar utilizadores ou serviços
-        printf("[CONTROLADOR] Comando 'listar' recebido\n");
-        // ... Itera pelo teu array 'agendamentos' e imprime ...
-    }
-    else if (strcmp(comando, "utiliz") == 0)
-    // ... Itera pelo teu array 'utilizadores' e imprime ...
-    {
-    }
-    else if (strcmp(comando, "frota") == 0)
-    {
-        // ... Itera pelo teu array 'frota' e imprime progresso ...
-    }
-
-    else if (strcmp(comando, "cancelar") == 0 && num_args == 2)
-    {
-        int id= atoi(arg);
-        if( id == 0){
-            printf("[CONTROLADOR] Comando 'cancelar' inválido: %s\n", arg);
-            // ... Limpa array 'agendamentos' ...
-            // ... Itera pelo array 'frota' e envia kill(pid, SIGUSR1) a todos
-        }else{
-            // ... Procura 'id' em 'agendamentos' e remove ...
-            // ... Procura 'id' em 'frota' e envia kill(pid, SIGUSR1)[
-        }
-    }else if (strcmp(comando, "km") == 0)
-    {
-        printf("[ADMIN] Total de KMs: %d\n", total_km);
-    }
-    else if (strcmp(comando, "hora") == 0)
-    {
-        printf("[ADMIN] Tempo Simulado: %d segundos\n", tempo_simulado);
-    }
-    else if (strcmp(comando, "terminar") == 0)
-    {
-        printf("[ADMIN] A terminar o sistema...\n");
-        unlink(PIPE_CONTROLADOR);
-        exit(0);
-    }
-    else
-    {
-        // Outros comandos: apenas log por agora
-        printf("[CONTROLADOR] Comando desconhecido: %s\n", comando);
-    }
+void handler_sinal(int s) {
+    exit(0); 
 }
 
-void Resposta(const Mensagem *msg)
-{
-    char pipe_cliente[100];
-    snprintf(pipe_cliente, sizeof(pipe_cliente), PIPE_CLIENTE, msg->pid);
+void setup_inicial() {
+    setbuf(stdout, NULL); // Tenta desativar buffer globalmente
+    memset(&ctrl, 0, sizeof(Controlador));
+    ctrl.fd_clientes = -1;
 
-    int fd_cliente = open(pipe_cliente, O_WRONLY);
-    if (fd_cliente == -1)
-    {
-        // Não conseguimos abrir o pipe do cliente; apenas log
-        perror("Resposta: erro a abrir pipe do cliente");
-        return;
+    signal(SIGINT, handler_sinal);
+    atexit(limpar_recursos);
+
+    if (mkfifo(PIPE_CONTROLADOR, 0666) == -1 && errno != EEXIST) {
+        perror("[ERRO] Falha no mkfifo");
+        exit(1);
     }
 
-    Mensagem resposta;
-    memset(&resposta, 0, sizeof(Mensagem));
-    resposta.pid = getpid();
-    snprintf(resposta.comando, sizeof(resposta.comando), "resposta");
-    snprintf(resposta.mensagem, sizeof(resposta.mensagem), "Olá %s, recebi o teu pedido!", msg->username);
-
-    if (write(fd_cliente, &resposta, sizeof(Mensagem)) == -1)
-    {
-        perror("Resposta: erro a escrever para pipe do cliente");
+    ctrl.fd_clientes = open(PIPE_CONTROLADOR, O_RDONLY | O_NONBLOCK);
+    if (ctrl.fd_clientes == -1) {
+        perror("[ERRO] Falha no open do FIFO");
+        exit(1);
     }
-    close(fd_cliente);
+
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    log_msg("[SISTEMA]", "Controlador iniciado.");
 }
 
-void exec_veiculos(const Mensagem *msg_agendamento, int hora, const char *local, int distancia)
-{
-    int veiculos_ativos;
+// ============================================================================
+// LÓGICA DO VEÍCULO
+// ============================================================================
 
-    if (veiculos_ativos >= NVEICULOS)
-    {
-        printf("[CONTROLADOR] Número máximo de veículos ativos atingido.\n");
+void lancar_veiculo(char* user, int pid_cli, int dist, char* local) {
+    int p[2];
+    pid_t pid;
+    char str_pid[20], str_dist[20];
+    char buffer[100];
+
+    if (ctrl.num_veiculos >= NVEICULOS) {
+        log_msg("[AVISO]", "Frota cheia. Pedido recusado.");
         return;
     }
-    
-    
-    int pipe_telemetria[2];
-    if (pipe(pipe_telemetria) == -1)
-    {
-        perror("lancar_veiculo: pipe");
+
+    if (pipe(p) == -1) {
+        log_msg("[ERRO]", "Falha pipe anónimo");
         return;
     }
-    pid_t pid = fork();
-    if (pid == -1)
-    {
-        perror("comandos: fork falhou");
 
-        return;
-    }
-    if (pid == 0)
-    {
-        // Filho = veículo
-        close(pipe_telemetria[0]);
-        dup2(pipe_telemetria[1], STDOUT_FILENO);
-        close(pipe_telemetria[1]);
+    pid = fork();
 
-        char pid_cliente[20], distancia_str[20], hora_str[20];
-        sprintf(pid_cliente, "%d", msg_agendamento->pid);
-        sprintf(distancia_str, "%d", distancia);
-        printf("[VEÍCULO] Lançado  user=%s PID=%s, distancia:%d, local=%s\n", msg_agendamento->username, pid_cliente, distancia, local);
-        fflush(stdout);
-        execl("./veiculo", "veiculo", msg_agendamento->username, pid_cliente, distancia_str, local, (char *)NULL);
-        perror("comandos: erro no exec do veículo");
+    if (pid == 0) { 
+        // --- FILHO (VEÍCULO) ---
+        close(p[0]); 
+        close(STDOUT_FILENO); 
+        dup(p[1]);            
+        close(p[1]);          
+
+        sprintf(str_pid, "%d", pid_cli);
+        sprintf(str_dist, "%d", dist);
+
+        execl("./veiculo", "veiculo", user, str_pid, str_dist, local, NULL);
+        perror("[ERRO] execl falhou");
         _exit(1);
-    }
-    else // Pai = controlador
-    {
-        close(pipe_telemetria[1]);
-        printf("[CONTROLADOR] Veículo lançado (pid=%d) para cliente %s\n", pid, msg_agendamento->username);
-        // **CRÍTICO**: Guardar o FD de leitura e o PID do veículo
-        // ... Adiciona 'pid' e 'pipe_telemetria[0]' ao teu array 'frota' ...
-        // ... Define o 'pipe_telemetria[0]' como O_NONBLOCK ...
-        // fcntl(pipe_telemetria[0], F_SETFL, O_NONBLOCK);
-        // num_veiculos_ativos++;
+
+    } else if (pid > 0) { 
+        // --- PAI (CONTROLADOR) ---
+        close(p[1]); 
+        int flags = fcntl(p[0], F_GETFL, 0);
+        fcntl(p[0], F_SETFL, flags | O_NONBLOCK);
+
+        int idx = ctrl.num_veiculos;
+        ctrl.frota[idx].pid = pid;
+        ctrl.frota[idx].fd_leitura = p[0];
+        ctrl.frota[idx].ocupado = 1;
+        ctrl.num_veiculos++;
+
+        sprintf(buffer, "Veículo %d enviado para %s", pid, user);
+        log_msg("[FROTA]", buffer);
     }
 }
 
-void processar_pedido_cliente(Mensagem* msg) {
-    int tempo_simulado = 0; // Deves manter isto atualizado no controlador
-    
-    printf("[CONTROLADOR-CLIENTE] Recebido '%s' de %s\n", msg->comando, msg->username);
+void verificar_frota() {
+    char buffer[256];
+    char tag[20];
+    int i, n;
 
-    // (Aqui deves ter a lógica de registar novo utilizador se for a 1ª vez)
-    // ...
-    
-    if (strcmp(msg->comando, "agendar") == 0) {
-        // [cite: 138]
-        int hora, distancia;
-        char local[100];
-        if (sscanf(msg->mensagem, "%d %99s 
-            %d", &hora, local, &distancia) == 3) {
-            printf("[CONTROLADOR] Agendamento: H: %d, L: %s, D: %d\n", hora, local, distancia);
+    for (i = 0; i < ctrl.num_veiculos; i++) {
+        n = read(ctrl.frota[i].fd_leitura, buffer, sizeof(buffer) - 1);
+        if (n > 0) {
+            buffer[n] = '\0';
+            // Correção para não perder mensagens se vierem coladas
+            // (Simplificação: imprime tudo o que vier)
+            if (buffer[strlen(buffer)-1] == '\n') buffer[strlen(buffer)-1] = '\0';
             
-            // Lógica de agendamento:
-            if (hora == tempo_simulado) {
-                // Se for para "agora", lança já
-                exec_veiculos(msg, hora, local, distancia);
+            sprintf(tag, "[TAXI-%d]", ctrl.frota[i].pid);
+            
+            // Imprime diretamente com fflush para garantir que aparece
+            printf("[TEMPO %03d] %-12s %s\n", ctrl.tempo, tag, buffer);
+            fflush(stdout); // <--- IMPORTANTE
+
+            if (strstr(buffer, "concluída") != NULL) {
+                ctrl.total_km += 10; 
+            }
+        }
+    }
+}
+
+// ============================================================================
+// GESTÃO DE CLIENTES E ADMIN
+// ============================================================================
+
+void processar_comando_cliente(Mensagem *m) {
+    char msg_buf[300];
+    int h, d;
+    char loc[100];
+
+    if (strcmp(m->comando, "login") == 0) {
+        registar_cliente(m->pid); 
+        sprintf(msg_buf, "Cliente %s (PID %d) entrou.", m->username, m->pid);
+        log_msg("[LOGIN]", msg_buf);
+    }
+    else if (strcmp(m->comando, "agendar") == 0) {
+        if (sscanf(m->mensagem, "%d %99s %d", &h, loc, &d) == 3) {
+            sprintf(msg_buf, "Agendar: %s, %dkm, %dh", loc, d, h);
+            log_msg("[PEDIDO]", msg_buf);
+            
+            if (h <= ctrl.tempo) {
+                lancar_veiculo(m->username, m->pid, d, loc);
             } else {
-                // Se for para o futuro, guarda no array 'agendamentos'
-                // ... (adicionar ao array 'agendamentos') ...
+                log_msg("[AGENDA]", "Agendamento futuro.");
             }
-            // ... (enviar resposta de sucesso ao cliente) ...
-            
         } else {
-            // ... (enviar resposta de erro ao cliente) ...
+            log_msg("[ERRO]", "Formato incorreto.");
         }
-
-    } else if (strcmp(msg->comando, "cancelar") == 0) {
-        // [cite: 142]
-        int id = atoi(msg->mensagem);
-        printf("[CONTROLADOR] %s pede para cancelar ID %d\n", msg->username, id);
-        // ... Procura no array 'agendamentos' pelo 'id' E 'msg->username' ...
-        // ... Se encontrar, remove e envia sucesso ...
-        // ... Se não, envia erro ...
-        
-    } else if (strcmp(msg->comando, "consultar") == 0) {
-        // [cite: 144]
-        printf("[CONTROLADOR] %s pede para consultar\n", msg->username);
-        // ... Itera no array 'agendamentos' por 'msg->username' ...
-        // ... Constrói uma string com os resultados ...
-        // ... Envia a string de resposta ao cliente ...
-        
-    } else if (strcmp(msg->comando, "terminar") == 0) {
-        // [cite: 158]
-        printf("[CONTROLADOR] %s está a terminar\n", msg->username);
-        // ... Cancela todos os serviços agendados deste user ('cancelar 0' só para ele) ...
-        // ... Remove o user do array 'utilizadores' ...
-        // ... Envia "Adeus" ...
+    } 
+    else if (strcmp(m->comando, "terminar") == 0) {
+        remover_cliente(m->pid); 
+        sprintf(msg_buf, "Cliente %s saiu.", m->username);
+        log_msg("[LOGOUT]", msg_buf);
     }
 }
 
-void verificar_agendamentos(int tempo_atual)
-{
-    // Itera pelo array 'agendamentos'
-    // Se algum agendamento tiver hora == tempo_simulado:
-    //    lancar_veiculo(...)
-    //    remover do array 'agendamentos'
-}
-
-void processa_telemetria_veiculo(int indice_frota, char*dados){
+void verificar_clientes() {
+    Mensagem m;
+    int n = read(ctrl.fd_clientes, &m, sizeof(Mensagem));
     
+    if (n > 0) {
+        processar_comando_cliente(&m);
+    } 
+    else if (n == 0) {
+        close(ctrl.fd_clientes);
+        ctrl.fd_clientes = open(PIPE_CONTROLADOR, O_RDONLY | O_NONBLOCK);
+    }
+}
+
+void verificar_admin() {
+    char cmd[100];
+    int n = read(STDIN_FILENO, cmd, sizeof(cmd)-1);
+    if (n > 0) {
+        cmd[n] = '\0';
+        if (cmd[strlen(cmd)-1] == '\n') cmd[strlen(cmd)-1] = '\0';
+
+        if (strcmp(cmd, "listar") == 0) {
+            printf("--- STATUS: Tempo: %ds | Veículos: %d | KM: %d ---\n", 
+                   ctrl.tempo, ctrl.num_veiculos, ctrl.total_km);
+            fflush(stdout); // <--- IMPORTANTE
+        } 
+        else if (strcmp(cmd, "terminar") == 0) {
+            exit(0);
+        }
+    }
 }
 
 
-int main()
-{
-    printf("[CONTROLADOR] A iniciar...\n");
-    atexit(limparPipes);
+int main() {
+    setup_inicial();
 
-    // Cria pipe principal
-    if (mkfifo(PIPE_CONTROLADOR, 0666) == -1 && errno != EEXIST)
-    {
-        perror("Erro a criar FIFO do controlador");
-        exit(1);
+    while (1) {
+        verificar_clientes(); 
+        verificar_frota();    
+        verificar_admin();    
+
+        sleep(1); 
+        ctrl.tempo++;
     }
-
-    int fd_controlador = open(PIPE_CONTROLADOR, O_RDONLY | O_NONBLOCK);
-    if (fd_controlador == -1)
-    {
-        perror("Erro a abrir FIFO do controlador");
-        exit(1);
-    }
-
-    Mensagem msg;
-    printf("[CONTROLADOR] A aguardar mensagens...\n");
-
-    while (1)
-    {
-        int n = read(fd_controlador, &msg, sizeof(Mensagem));
-        if (n > 0)
-        {
-            printf("[CONTROLADOR] Recebido de %s: %s\n", msg.username, msg.comando);
-            processar_pedido_cliente(&msg);
-        }
-        else if (n == 0)
-        {
-            // EOF: reabrir o pipe para continuar a ler sem bloquear
-            close(fd_controlador);
-            fd_controlador = open(PIPE_CONTROLADOR, O_RDONLY);
-            if (fd_controlador == -1)
-            {
-                perror("Erro a reabrir FIFO do controlador");
-                exit(1);
-            }
-        }
-        else
-        {
-            perror("Erro a ler do pipe do controlador");
-        }
-    }
-
-    close(fd_controlador);
-    unlink(PIPE_CONTROLADOR);
     return 0;
 }
