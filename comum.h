@@ -22,7 +22,6 @@ typedef struct {
     pid_t pid;             // PID do cliente
     char comando[50];      // tipo de comando
     char username[50];     // nome do utilizador
-
     char mensagem[256];    // mensagem adicional
 } Mensagem;
 

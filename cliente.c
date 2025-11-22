@@ -27,17 +27,10 @@ void trataSinais(int s) {
 // ============================================================================
 
 void receberMensagens() {
-    // ALTERAÇÃO AQUI: Usar O_RDWR em vez de O_RDONLY
-    // Isto impede que o read retorne 0 (EOF) quando o veículo fecha a ligação
-    int fd_recebe = open(pipe_cliente, O_RDWR); 
-    
-    if(fd_recebe == -1) {
-        perror("[ERRO] Abrir pipe do cliente");
-        exit(1);
-    }
+    int fd_recebe = open(pipe_cliente, O_RDWR); // O_RDWR para não dar EOF
+    if(fd_recebe == -1) exit(1);
 
     Mensagem resp;
-    // O ciclo agora mantém-se vivo mesmo que o veículo saia
     while (read(fd_recebe, &resp, sizeof(resp)) > 0) {
         
         if(strcmp(resp.comando, "status") == 0) {
@@ -47,6 +40,16 @@ void receberMensagens() {
             pipe_veiculo_ativo[0] = '\0';
             printf("[VEÍCULO] Viagem terminada. (Podes agendar nova viagem)\n");
         }
+        // --- NOVO: AUTORIZAÇÃO DE SAÍDA ---
+        else if(strcmp(resp.comando, "exit_ok") == 0) {
+            printf("[SISTEMA] Saída autorizada. Até à próxima!\n");
+            kill(getppid(), SIGINT); // Mata o processo pai (que está no menu)
+            exit(0); // Mata este processo filho
+        }
+        // --- NOVO: MENSAGEM DE ERRO ---
+        else if(strcmp(resp.comando, "erro") == 0) {
+            printf("[ERRO] %s\n", resp.mensagem);
+        }
         else {
             printf("[CONTROLADOR] %s\n", resp.mensagem);
         }
@@ -54,7 +57,6 @@ void receberMensagens() {
         printf("> "); 
         fflush(stdout);
     }
-    
     close(fd_recebe);
 }
 
@@ -100,7 +102,7 @@ void enviarComandos(const char *username) {
         if(strcmp(cmd, "agendar") == 0 || strcmp(cmd, "cancelar") == 0 || strcmp(cmd, "terminar") == 0) {
             write(fd_controlador, &msg, sizeof(Mensagem));
             
-            if(strcmp(cmd, "terminar") == 0) break;
+            //if(strcmp(cmd, "terminar") == 0) break;
         } else {
             printf("Comando desconhecido ou inválido.\n");
         }
