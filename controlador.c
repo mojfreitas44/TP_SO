@@ -12,7 +12,7 @@ typedef struct {
     int ocupado;
     pid_t pid_cliente;  // Guardar de quem é o veiculo (para o cancelar)
     char ultimo_status[50]; // Para guardar o progresso
-    int total_km;
+    int distancia_viagem;
 } Veiculo;
 
 typedef struct {
@@ -226,7 +226,7 @@ void lancar_veiculo(char* user, int pid_cli, int dist, char* local) {
         ctrl.frota[idx].pid_cliente = pid_cli; // Guardar dono
         ctrl.frota[idx].fd_leitura = p[0];
         ctrl.frota[idx].ocupado = 1;
-        ctrl.frota[idx].total_km = dist;
+        ctrl.frota[idx].distancia_viagem = dist;
         strcpy(ctrl.frota[idx].ultimo_status, "A iniciar");
         ctrl.num_veiculos++;
 
@@ -273,7 +273,7 @@ void verificar_frota() {
                 fflush(stdout);
 
                 if (strstr(buffer, "concluída") != NULL) {
-                    ctrl.total_km += ctrl.frota[i].total_km; // Simplificado
+                    ctrl.total_km += ctrl.frota[i].distancia_viagem; // Simplificado
                     ctrl.frota[i].ocupado = 0;
                     strcpy(ctrl.frota[i].ultimo_status, "Livre/Terminado");
                 }
