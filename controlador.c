@@ -68,8 +68,20 @@ void remover_cliente(pid_t pid) {
         if (ctrl.clientes[i].pid == pid) {
             ctrl.clientes[i].pid = 0;
             ctrl.clientes[i].username[0] = '\0'; // Limpa o nome
-            return;
+            break;
         }
+    }
+    int cancelados = 0;
+    for (int i=0; i<MAX_AGENDAMENTOS; i++){
+        if(ctrl.agenda[i].ativo == 1 && ctrl.agenda[i].pid_cliente == pid){
+            ctrl.agenda[i].ativo = 0; // Cancela o agendamento
+            cancelados++;
+        }
+    }
+    if(cancelados > 0){
+        char msg[100];
+        sprintf(msg, "Cancelados %d agendamentos pendentes do cliente (PID %d).", cancelados, pid);
+        log_msg("[CANCELAR]", msg);
     }
 }
 
