@@ -1,11 +1,5 @@
 #include "comum.h"
 
-// ============================================================================
-// ESTRUTURAS DE DADOS
-// ============================================================================
-
-#define MAX_AGENDAMENTOS 50 // Limite de pedidos em espera
-
 typedef struct {
     pid_t pid;
     int fd_leitura;     
@@ -406,15 +400,33 @@ void processar_comando_cliente(Mensagem *m) {
             sprintf(msg_buf, "Agendar: %s, %dkm, %dh", loc, d, h);
             log_msg("[PEDIDO]", msg_buf);
             
-            if (h <= ctrl.tempo && ctrl.num_veiculos < NVEICULOS) {
+            // 1. IMPEDIR AGENDAMENTO NO PASSADO
+            if (h < ctrl.tempo) {
+                char erro_msg[100];
+                sprintf(erro_msg, "Erro: Impossível agendar para %d (Tempo atual: %d).", h, ctrl.tempo);
+                enviar_resposta(m->pid, erro_msg);
+                log_msg("[ERRO]", "Tentativa de agendamento no passado recusada.");
+            }
+            // 2. SE FOR PARA AGORA E HOUVER VAGA
+            else if (h == ctrl.tempo && ctrl.num_veiculos < NVEICULOS) {
                 lancar_veiculo(m->username, m->pid, d, loc);
-            } else {
+                // Feedback de sucesso imediato
+                enviar_resposta(m->pid, "Sucesso: Veículo enviado de imediato!");
+            } 
+            // 3. SE FOR FUTURO OU FROTA CHEIA -> LISTA DE ESPERA
+            else {
                 registar_agendamento(m->username, m->pid, h, d, loc);
+                // Feedback de agendamento
+                char confirm[100];
+                sprintf(confirm, "Sucesso: Agendamento registado para o tempo %d.", h);
+                enviar_resposta(m->pid, confirm);
             }
         } else {
+            // Feedback de erro de sintaxe
+            enviar_resposta(m->pid, "Erro sintaxe. Use: agendar <hora> <local> <km>");
             log_msg("[ERRO]", "Formato incorreto.");
         }
-    } 
+    }
     else if (strcmp(m->comando, "consultar") == 0) {
         log_msg("[PEDIDO]", "Cliente pediu consulta de agenda.");
         
