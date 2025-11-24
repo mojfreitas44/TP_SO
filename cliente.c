@@ -1,7 +1,6 @@
 #include "comum.h"
 
 char pipe_cliente[100];
-char pipe_veiculo_ativo[100] = "";
 int fd_controlador;
 
 // ============================================================================
@@ -37,7 +36,6 @@ void receberMensagens() {
             printf("[VEÍCULO] %s\n", resp.mensagem);
         } 
         else if(strstr(resp.mensagem, "concluída") != NULL || strcmp(resp.comando, "fim") == 0){
-            pipe_veiculo_ativo[0] = '\0';
             printf("[VEÍCULO] Viagem terminada. (Podes agendar nova viagem)\n");
         }
         // --- NOVO: AUTORIZAÇÃO DE SAÍDA ---
