@@ -74,6 +74,7 @@ void enviarComandos(const char *username) {
     // MENU SIMPLIFICADO (Sem entrar/sair)
     printf("\n--- Comandos Disponíveis ---\n");
     printf(" agendar <hora> <local> <km>\n");
+    printf(" cancelar <ID>\n");
     printf(" consultar\n");
     printf(" terminar\n");
     printf("----------------------------\n");

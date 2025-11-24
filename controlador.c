@@ -231,7 +231,7 @@ int cancelar_servico(pid_t pid_solicitante, int id_cancelar) {
                 // Notificar o cliente
                 char p_name[100];
                 sprintf(p_name, PIPE_CLIENTE, pid_vitima);
-                
+
                 int fd = open(p_name, O_WRONLY | O_NONBLOCK);
                 if (fd != -1) {
                     Mensagem m;
@@ -463,7 +463,6 @@ void processar_comando_cliente(Mensagem *m) {
         sprintf(msg_buf, "Cliente %s pediu cancelamento (WIP).", m->username);
         log_msg("[CANCELAR]", msg_buf);
     }
-    // --- LÓGICA DE TERMINAR CORRIGIDA ---
     else if (strcmp(m->comando, "terminar") == 0) {
         // 1. Verificar se o cliente tem algum veículo ativo
         int ocupado = 0;
@@ -536,7 +535,7 @@ void verificar_admin() {
             int vazia = 1;
             for(int i=0; i<MAX_AGENDAMENTOS; i++) {
                 if(ctrl.agenda[i].ativo) {
-                    printf("ID %d | Cliente: %s | Hora: %d | Dest: %s\n", 
+                    printf("ID %d | Cliente: %s | Hora: %d | Origem: %s\n", 
                            i, ctrl.agenda[i].username, ctrl.agenda[i].hora, ctrl.agenda[i].local);
                     vazia = 0;
                 }
