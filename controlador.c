@@ -225,10 +225,28 @@ int cancelar_servico(pid_t pid_solicitante, int id_cancelar) {
             }
 
             if (alvo_correto) {
-                ctrl.agenda[i].ativo = 0; 
+                pid_t pid_vitima = ctrl.agenda[i].pid_cliente;
+                ctrl.agenda[i].ativo = 0;
                 cancelados++;
-                printf("[SISTEMA] Agendamento %d removido.\n", i);
-            }
+                // Notificar o cliente
+                char p_name[100];
+                sprintf(p_name, PIPE_CLIENTE, pid_vitima);
+                
+                int fd = open(p_name, O_WRONLY | O_NONBLOCK);
+                if (fd != -1) {
+                    Mensagem m;
+                    m.pid = getpid();
+                    strcpy(m.comando, "resposta");
+                    // 3. Preparar mensagem
+                    char aviso[100];
+                    sprintf(aviso, "O teu agendamento (ID %d) foi cancelado.", i);
+                    strncpy(m.mensagem, aviso, 255);
+                    
+                    // 4. Enviar e fechar
+                    write(fd, &m, sizeof(Mensagem));
+                    close(fd);
+                }
+                printf("[SISTEMA] Agendamento %d removido e cliente notificado.\n", i);            }
         }
     }
     return cancelados;
