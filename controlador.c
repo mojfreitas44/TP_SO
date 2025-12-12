@@ -107,7 +107,7 @@ void handler_sinal(int s)
     exit(0);
 }
 
-// CORREÇÃO: Agora retorna int (1=Sucesso, 0=Cheio)
+// Retorna int (1=Sucesso, 0=Cheio)
 int registar_cliente(pid_t pid, char *nome)
 {
     pthread_mutex_lock(&m_clientes);
@@ -116,7 +116,7 @@ int registar_cliente(pid_t pid, char *nome)
         if (ctrl.clientes[i].pid == 0)
         { // Encontrou slot vazio
             ctrl.clientes[i].pid = pid;
-            strcpy(ctrl.clientes[i].username, nome); // ver diferença entre strcpy e strncpy
+            strcpy(ctrl.clientes[i].username, nome); 
             pthread_mutex_unlock(&m_clientes);
             return 1; // Sucesso
         }
