@@ -126,6 +126,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    Mensagem aux; 
+    
+    // Verifica se o argumento é maior que o tamanho do campo (-1 para o \0)
+    if (strlen(argv[1]) > sizeof(aux.username) - 1) {
+        printf("[ERRO] O nome '%s' e demasiado longo!\n", argv[1]);
+        printf("Maximo permitido: %lu caracteres.\n", sizeof(aux.username) - 1);
+        return 1; // Encerra o cliente imediatamente
+    }
+
     if (access(PIPE_CONTROLADOR, F_OK) == -1) {
         printf("[ERRO] Controlador inativo.\n");
         return 1;
@@ -169,7 +178,7 @@ int main(int argc, char *argv[]) {
 
     // 3. VERIFICAR SE POSSO ENTRAR
     if (strcmp(resposta.comando, "erro") == 0) {
-        printf("[ERRO FATAL] %s\n", resposta.mensagem);
+        printf("[ERRO] %s\n", resposta.mensagem);
         unlink(pipe_cliente); // Limpa o pipe antes de morrer
         return 1; // TERMINA O PROGRAMA AQUI! O menu nunca aparece.
     }
