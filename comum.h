@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sys/wait.h>
 
 #define PIPE_CONTROLADOR "controlador_fifo"
 #define PIPE_CLIENTE "pipe%d"

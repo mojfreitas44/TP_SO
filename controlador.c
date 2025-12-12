@@ -189,6 +189,7 @@ void setup_inicial()
     }
 
     signal(SIGINT, handler_sinal);
+    signal(SIGPIPE, SIG_IGN); // Ignora erros de escrita em pipes quebrados
     atexit(limpar_recursos);
 
     if (mkfifo(PIPE_CONTROLADOR, 0666) == -1 && errno != EEXIST)
@@ -417,6 +418,7 @@ void *thread_veiculo(void *arg)
         }
 
     }
+    waitpid(v->pid, NULL, 0); // Espera o veículo terminar
     pthread_mutex_lock(&m_frota);
     v->thread_finalizada = 1;
     pthread_mutex_unlock(&m_frota);
