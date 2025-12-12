@@ -14,9 +14,9 @@
 
 #define PIPE_CONTROLADOR "controlador_fifo"
 #define PIPE_CLIENTE "pipe%d"
-#define NVEICULOS 10
-#define NUTILIZADORES 30
-#define MAX_AGENDAMENTOS 50
+#define NVEICULOS 2 // 10 por default
+#define NUTILIZADORES 3 // 30 por default
+#define MAX_AGENDAMENTOS 3 // 50 por default
 
 typedef struct {
     pid_t pid;             // PID do cliente

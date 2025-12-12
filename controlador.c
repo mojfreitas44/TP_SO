@@ -158,7 +158,6 @@ void remover_cliente(pid_t pid)
         log_msg("[CANCELAR]", msg);
     }
 }
-
 // thread para simulaer o tempo
 // uso de mutex para porque é necessário ler e escrever o tempo
 void *thread_relogio(void *arg)
@@ -283,47 +282,40 @@ int registar_agendamento_na_lista(int id_servico, char *user, pid_t pid, int h, 
 int cancelar_servico(pid_t pid_solicitante, int id_cancelar)
 {
     int cancelados = 0;
-    pthread_mutex_lock(&m_frota);
 
     // --- 1. Cancelar Veículos em Andamento (FROTA) ---
-    for (int i = 0; i < ctrl.num_veiculos; i++)
+    // ALTERAÇÃO: Só o Admin (pid_solicitante == -1) pode cancelar o que já está na estrada
+    if (pid_solicitante == -1) 
     {
-        if (ctrl.frota[i].pid > 0)
+        pthread_mutex_lock(&m_frota);
+        for (int i = 0; i < ctrl.num_veiculos; i++)
         {
-            int alvo = 0;
+            if (ctrl.frota[i].pid > 0)
+            {
+                int alvo = 0;
 
-            if (pid_solicitante == -1)
-            { // ADMIN
+                // Admin cancela: ou tudo (id=0) ou ID específico
                 if (id_cancelar == 0)
                     alvo = 1;
                 else if (ctrl.frota[i].id_servico == id_cancelar)
                     alvo = 1;
-            }
-            else
-            { // CLIENTE
-                if (ctrl.frota[i].pid_cliente == pid_solicitante)
+
+                if (alvo)
                 {
-                    if (id_cancelar == 0)
-                        alvo = 1;
-                    else if (ctrl.frota[i].id_servico == id_cancelar)
-                        alvo = 1;
+                    kill(ctrl.frota[i].pid, SIGUSR1);
+                    strcpy(ctrl.frota[i].ultimo_status, "A cancelar...");
+
+                    cancelados++;
+                    printf("[SISTEMA] Sinal de cancelamento enviado ao Veículo %d (Serviço ID %d).\n", ctrl.frota[i].pid, ctrl.frota[i].id_servico);
                 }
             }
-
-            if (alvo)
-            {
-                kill(ctrl.frota[i].pid, SIGUSR1);
-                strcpy(ctrl.frota[i].ultimo_status, "A cancelar...");
-
-                cancelados++;
-                printf("[SISTEMA] Sinal de cancelamento enviado ao Veículo %d (Serviço ID %d).\n", ctrl.frota[i].pid, ctrl.frota[i].id_servico);
-            }
         }
+        pthread_mutex_unlock(&m_frota);
     }
-    pthread_mutex_unlock(&m_frota);
 
-    pthread_mutex_lock(&m_agenda);
     // --- 2. Cancelar Agendamentos Pendentes (AGENDA) ---
+    // (Esta parte todos podem fazer)
+    pthread_mutex_lock(&m_agenda);
     for (int i = 0; i < MAX_AGENDAMENTOS; i++)
     {
         if (ctrl.agenda[i].ativo)
@@ -353,6 +345,7 @@ int cancelar_servico(pid_t pid_solicitante, int id_cancelar)
                 ctrl.agenda[i].ativo = 0;
                 cancelados++;
 
+                // Se foi o Admin a cancelar, avisa o Cliente
                 if (pid_solicitante == -1)
                 {
                     char aviso[100];
@@ -365,6 +358,7 @@ int cancelar_servico(pid_t pid_solicitante, int id_cancelar)
         }
     }
     pthread_mutex_unlock(&m_agenda);
+    
     return cancelados;
 }
 
@@ -597,7 +591,7 @@ void verificar_agendamentos(void)
                     proxima_vaga = tempo_atual + 5;
                     
                     char proposta[200];
-                    sprintf(proposta, "Frota cheia. Aceitas reagendar ID %d para t=%d? (Escreve: decisao %d s)", id_serv, proxima_vaga, id_serv);
+                    sprintf(proposta, "Frota cheia. Aceitas reagendar ID %d para t=%d? (Escreve: decisao %d <s/n>)", id_serv, proxima_vaga, id_serv);
                     enviar_resposta(pid_cli, "status", proposta);
 
                     // MARCA COMO AGUARDANDO RESPOSTA
@@ -610,9 +604,6 @@ void verificar_agendamentos(void)
     }
     pthread_mutex_unlock(&m_agenda);
 }
-
-
-
 // ============================================================================
 // GESTÃO DE PEDIDOS (CLIENTES)
 // ============================================================================
@@ -687,11 +678,10 @@ void processar_comando_cliente(Mensagem *m)
             }
         }
     }
-    else if (strcmp(m->comando, "agendar") == 0)
+else if (strcmp(m->comando, "agendar") == 0)
     {
         if (sscanf(m->mensagem, "%d %99s %d", &h, loc, &d) == 3)
         {
-
             int novo_id;
             pthread_mutex_lock(&m_agenda);
             novo_id = ctrl.proximo_id++;
@@ -703,6 +693,7 @@ void processar_comando_cliente(Mensagem *m)
             pthread_mutex_lock(&m_tempo);
             int tempo_atual = ctrl.tempo;
             pthread_mutex_unlock(&m_tempo);
+
             if (h < tempo_atual)
             {
                 char erro_msg[100];
@@ -719,53 +710,51 @@ void processar_comando_cliente(Mensagem *m)
                 }
                 else
                 {
-                    // FROTA CHEIA: Adicionar à lista 
+                    // FROTA CHEIA (PARA AGORA): Adicionar à lista
                     int idx = registar_agendamento_na_lista(novo_id, m->username, m->pid, h, d, loc, 1);
-                    if(idx != -1){
+                    if (idx != -1) {
                         int proxima_vaga = obter_proxima_vaga();
-
-                        if(proxima_vaga <= tempo_atual) 
+                        if (proxima_vaga <= tempo_atual)
                             proxima_vaga = tempo_atual + 2;
-        
-                            // 3. Modifica o agendamento que acabámos de criar para ficar "Bloqueado" à espera de resposta
-                            pthread_mutex_lock(&m_agenda);
-                            
-                            ctrl.agenda[idx].aguardar_confirmacao = 1;
-                            ctrl.agenda[idx].hora_proposta = proxima_vaga;
-                            ctrl.agenda[idx].ultimo_aviso = tempo_atual;
-                            
-                            pthread_mutex_unlock(&m_agenda);
-                            
-                            char confirm[100];
-                            sprintf(confirm, "Frota cheia! Agendamento ID %d colocado em espera prioritária.", novo_id);
-                            enviar_resposta(m->pid, "aviso", confirm);
-                    
+
+                        pthread_mutex_lock(&m_agenda);
+                        ctrl.agenda[idx].aguardar_confirmacao = 1;
+                        ctrl.agenda[idx].hora_proposta = proxima_vaga;
+                        ctrl.agenda[idx].ultimo_aviso = tempo_atual;
+                        pthread_mutex_unlock(&m_agenda);
+
+                        char confirm[100];
+                        sprintf(confirm, "Frota cheia! Agendamento ID %d colocado em espera prioritária.", novo_id);
+                        enviar_resposta(m->pid, "aviso", confirm);
+                    } else {
+                        // Lista cheia
+                        enviar_resposta(m->pid, "erro", "Impossível agendar: Lista de agendamentos cheia!");
                     }
-                    
                 }
             }
             else
             {
+                // AGENDAMENTO FUTURO
                 int ocupados_na_hora = 0;
-
                 pthread_mutex_lock(&m_frota);
-                for(int i = 0; i<NVEICULOS; i++){
-                    if(ctrl.frota[i].ocupado && ctrl.frota[i].tempo_conclusao_estimado > h){
+                for (int i = 0; i < NVEICULOS; i++) {
+                    if (ctrl.frota[i].ocupado && ctrl.frota[i].tempo_conclusao_estimado > h) {
                         ocupados_na_hora++;
-                    }   
+                    }
                 }
                 pthread_mutex_unlock(&m_frota);
 
-                if(ocupados_na_hora >= NVEICULOS){
+                if (ocupados_na_hora >= NVEICULOS) {
+                    // NEGOCIAÇÃO (PREVISÃO DE FROTA CHEIA)
                     int idx = registar_agendamento_na_lista(novo_id, m->username, m->pid, h, d, loc, 1);
-                
-                    if (idx == -1)
+
+                    // CORREÇÃO CRÍTICA: Só avançar se idx for válido (!= -1)
+                    if (idx != -1) 
                     {
                         int proxima_vaga = obter_proxima_vaga();
+                        if (proxima_vaga <= h)
+                            proxima_vaga = h + 5;
 
-                        if(proxima_vaga <= h)
-                            proxima_vaga = h +5;
-                            
                         pthread_mutex_lock(&m_agenda);
                         ctrl.agenda[idx].aguardar_confirmacao = 1;
                         ctrl.agenda[idx].hora_proposta = proxima_vaga;
@@ -775,16 +764,26 @@ void processar_comando_cliente(Mensagem *m)
                         char confirm[200];
                         sprintf(confirm, "Previsão: Frota cheia em t=%d. Aceitas reagendar ID %d para t=%d? (decisao %d s)", h, novo_id, proxima_vaga, novo_id);
                         enviar_resposta(m->pid, "status", confirm);
-
                     }
-                }else {
-                    registar_agendamento_na_lista(novo_id, m->username, m->pid, h, d, loc, 0);
+                    else {
+                        // Se a lista estiver cheia, não conseguimos nem guardar para negociar
+                        enviar_resposta(m->pid, "erro", "Impossível agendar: Lista de agendamentos cheia!");
+                    }
+                } 
+                else {
+                    // REGISTO NORMAL (AQUI ESTÁ A TUA CORREÇÃO PRINCIPAL)
+                    int idx = registar_agendamento_na_lista(novo_id, m->username, m->pid, h, d, loc, 0);
                     
-                    char confirm[100];
-                    sprintf(confirm, "Sucesso: Agendamento ID %d registado para t=%d.", novo_id, h);
-                    enviar_resposta(m->pid, m->comando, confirm);
+                    if (idx != -1) {
+                        char confirm[100];
+                        // Mudado de "registado" para "requisitado" conforme pediste
+                        sprintf(confirm, "Sucesso: Agendamento ID %d requisitado para t=%d.", novo_id, h);
+                        enviar_resposta(m->pid, m->comando, confirm);
+                    } else {
+                        // Tratamento do erro se a lista estiver cheia
+                        enviar_resposta(m->pid, "erro", "Impossível agendar: Lista de agendamentos cheia!");
+                    }
                 }
-                
             }
         }
         else
@@ -843,7 +842,7 @@ void processar_comando_cliente(Mensagem *m)
             close(fd_resp);
         }
     }
-    else if (strcmp(m->comando, "cancelar") == 0)
+else if (strcmp(m->comando, "cancelar") == 0)
     {
         int id_alvo = atoi(m->mensagem);
 
@@ -856,21 +855,37 @@ void processar_comando_cliente(Mensagem *m)
         }
         else
         {
-            // 2. Tenta cancelar no sistema
-            int n = cancelar_servico(m->pid, id_alvo);
-
-            char resp[100];
-            if (n > 0)
-            {
-                // SUCESSO: Envia com tag "info" (ou usa o default que vai cair no [CONTROLADOR])
-                sprintf(resp, "Sucesso: Cancelaste o serviço ID %d.", id_alvo);
-                enviar_resposta(m->pid, "cancelar", resp);
+            // ALTERAÇÃO: Verificar primeiro se a viagem já está a decorrer
+            int em_curso = 0;
+            pthread_mutex_lock(&m_frota);
+            for(int i=0; i<ctrl.num_veiculos; i++){
+                // Verifica se existe um carro ativo com este ID e se pertence a este cliente
+                if(ctrl.frota[i].pid > 0 && ctrl.frota[i].id_servico == id_alvo && ctrl.frota[i].pid_cliente == m->pid){
+                    em_curso = 1;
+                    break;
+                }
             }
-            else
-            {
-                // FALHA: Envia com tag "erro" para o cliente mostrar a vermelho/[ERRO]
-                sprintf(resp, "O serviço ID %d não existe ou não te pertence.", id_alvo);
-                enviar_resposta(m->pid, "erro", resp);
+            pthread_mutex_unlock(&m_frota);
+
+            if(em_curso){
+                // Se está em curso, rejeita logo com mensagem específica
+                enviar_resposta(m->pid, "erro", "Viagem em curso! Já não podes cancelar.");
+            }
+            else {
+                // Se não está em curso, tenta cancelar (vai procurar apenas na Agenda/Lista de Espera)
+                int n = cancelar_servico(m->pid, id_alvo);
+
+                char resp[100];
+                if (n > 0)
+                {
+                    sprintf(resp, "Sucesso: Cancelaste o serviço ID %d.", id_alvo);
+                    enviar_resposta(m->pid, "info", resp); // "info" ou "cancelar" conforme preferires a cor
+                }
+                else
+                {
+                    sprintf(resp, "O serviço ID %d não existe (ou não está pendente).", id_alvo);
+                    enviar_resposta(m->pid, "erro", resp);
+                }
             }
         }
     }
@@ -899,7 +914,7 @@ void processar_comando_cliente(Mensagem *m)
             if (ocupado)
             {
                 strcpy(resp.comando, "erro");
-                strcpy(resp.mensagem, "Tens viagens a decorrer! Cancela-as antes de sair.");
+                strcpy(resp.mensagem, "Tens viagens a decorrer! Espera que terminem para poderes sair.");
             }
             else
             {
@@ -938,7 +953,7 @@ void processar_comando_cliente(Mensagem *m)
                     }else{
                         ctrl.agenda[i].ativo = 0;
 
-                        enviar_resposta(m->pid, "info", "Pedido cancelado a seu pedido.");
+                        enviar_resposta(m->pid, "info", "Pedido cancelado por si.");
                         log_msg("[AGENDA]", "Cliente recusou reagendamento. Pedido removido.");
                     }
                     break;
